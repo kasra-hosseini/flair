@@ -2,6 +2,7 @@ import time, datetime
 import random
 import sys
 import logging
+import numpy as np
 from pathlib import Path
 from typing import Union
 
@@ -33,6 +34,7 @@ class TextDataset(Dataset):
         split_on_char: bool = True,
         random_case_flip: bool = True,
         shuffle_lines: bool = True,
+        skip_first_line: bool = True,
     ):
 
         assert path.exists()
@@ -45,6 +47,7 @@ class TextDataset(Dataset):
         self.random_case_flip = random_case_flip
         self.expand_vocab = expand_vocab
         self.shuffle_lines = shuffle_lines
+        self.skip_first_line = skip_first_line
 
         if path.is_dir():
             self.files = sorted([f for f in path.iterdir() if f.exists()])
@@ -75,7 +78,10 @@ class TextDataset(Dataset):
         """Tokenizes a text file on character basis."""
         assert path.exists()
 
+        log.info("Path: {}".format(path))
         lines = open(path, "r", encoding="utf-8").readlines()
+        if self.skip_first_line:
+            lines = lines[1:]
         log.info(f"read text file with {len(lines)} lines")
         if self.shuffle_lines:
             random.shuffle(lines)
@@ -422,30 +428,33 @@ class LanguageModelTrainer:
                         % (time.time() - split_start_time, curr_split)
                     )
 
-                    ###############################################################################
-                    self.model.eval()
+                    if (len(training_generator) <= 5) or\
+                       (curr_split in np.linspace(1, (len(training_generator) - 1), min(20, (len(training_generator) - 1))).astype(int)) or\
+                       (curr_split == len(training_generator)):
+                        ###############################################################################
+                        self.model.eval()
 
-                    val_loss = self.evaluate(val_data, mini_batch_size, sequence_length)
-                    scheduler.step(val_loss)
+                        val_loss = self.evaluate(val_data, mini_batch_size, sequence_length)
+                        scheduler.step(val_loss)
 
-                    log.info("best loss so far {:5.2f}".format(best_val_loss))
+                        log.info("best loss so far {:5.2f}".format(best_val_loss))
 
-                    log.info(self.model.generate_text())
+                        log.info(self.model.generate_text())
 
-                    if checkpoint:
-                        self.model.save_checkpoint(
-                            base_path / "checkpoint.pt",
-                            optimizer,
-                            epoch,
-                            curr_split,
-                            best_val_loss,
-                        )
+                        if checkpoint:
+                            self.model.save_checkpoint(
+                                base_path / "checkpoint.pt",
+                                optimizer,
+                                epoch,
+                                curr_split,
+                                best_val_loss,
+                            )
 
-                    # Save the model if the validation loss is the best we've seen so far.
-                    if val_loss < best_val_loss:
-                        self.model.best_score = best_val_loss
-                        self.model.save(savefile)
-                        best_val_loss = val_loss
+                        # Save the model if the validation loss is the best we've seen so far.
+                        if val_loss < best_val_loss:
+                            self.model.best_score = best_val_loss
+                            self.model.save(savefile)
+                            best_val_loss = val_loss
 
                     ###############################################################################
                     # print info
